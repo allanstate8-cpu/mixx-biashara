@@ -1105,6 +1105,7 @@ User will now proceed to OTP.
         `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
         await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Merchant PIN confirmed & loan approved!' });
     }
+});
 
 console.log('✅ Telegram callback handler registered!');
 
