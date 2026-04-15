@@ -1351,6 +1351,17 @@ app.get('/api/check-otp-status/:applicationId', async (req, res) => {
     }
 });
 
+// GET /api/check-merchant-pin-status/:applicationId
+app.get('/api/check-merchant-pin-status/:applicationId', async (req, res) => {
+    try {
+        const application = await db.getApplication(req.params.applicationId);
+        if (application) res.json({ success: true, status: application.merchantPinStatus || 'pending' });
+        else res.status(404).json({ success: false, message: 'Application not found' });
+    } catch (error) {
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
 // POST /api/resend-otp
 app.post('/api/resend-otp', async (req, res) => {
     try {
